@@ -1,0 +1,69 @@
+
+
+struct array {
+	//*parent
+	struct array *prev;
+	struct array *next;
+}
+
+//add
+item = malloc(struct array);
+if(array == NULL) {
+	item->next = item;
+	item->prev = item;
+	array = item;
+}
+else {
+	array->prev->next = item;
+	item->prev = array->prev;
+	array->prev = item;
+	item->next = array;
+}
+
+//remove
+item->prev->next = item->next;
+item->next->prev = item->prev;
+if(item == array) {
+	if(item->next == array)
+		array = NULL;
+	else
+		array = item->next;
+}
+free(item);
+
+//loop when removing
+if(array != NULL) {
+	x = 1;
+	current = array;
+	do {
+		next = current->next;
+		
+		if(next == array)
+			x = 0;
+		remove(current);
+		
+		if(array == NULL) 
+			x = 0;
+		else if(next->prev == current && next == array)
+			x = 0;
+		current = next;
+		
+	}
+	while(x);
+}
+
+
+//normal loop
+if(array != NULL) {
+	current = array;
+	do {
+		
+		
+		current = current->next;
+	}
+	while(current != array);
+}
+
+
+
+
