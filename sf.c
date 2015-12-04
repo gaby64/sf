@@ -1343,8 +1343,6 @@ int sf_instance_read(struct sf_connection *connection) {
 		sf_instance_close(connection);
 		return -1;
 	}
-	if(ret < 0)
-		sf_instance_close(connection);
 	return 0;
 }
 
