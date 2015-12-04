@@ -72,7 +72,7 @@ struct sf_instance {
 struct sf_connection {
 	enum sf_intances type; //acceptor:server/connector:client
 	struct sf_socket *socket;
-	struct sockaddr_in addr;
+	struct sockaddr_storage addr;
 	struct sf_instance *instance;
 	void *dataptr;
 	int validated;

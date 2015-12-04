@@ -4,6 +4,7 @@
 #include <string.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <time.h>
@@ -17,7 +18,7 @@ void printbincharpad(char c) {
 	for (i = 7; i >= 0; --i) {
 		putchar((c & (1 << i)) ? '1' : '0' );
 	}
-	putchar('\n');
+	printf("..%c\n", c);
 }
 
 void binary_dump(void* data, size_t len) {
@@ -104,6 +105,7 @@ struct sf_socket *sf_sockets_add(struct sf_connection *connection, int socket_i)
 inline void sf_sockets_beat(struct sf_socket *socket) {
 	gettimeofday(&socket->lastbeat, NULL);
 	socket->connection->beat = 0;
+	//printf("Beat received at %ld.%06ld\n",  (long int)(socket->lastbeat.tv_sec), (long int)(socket->lastbeat.tv_usec));
 	//incorrect, for minimal bandwidth usage, only a keep-alive beat is sent, not a request/reply beat
 	//this number will fall somewhere in the peer beat interval, delayed by when the beat was sent vs the interval beat
 	socket->latency = (socket->lastbeat.tv_usec + 1000000 * socket->lastbeat.tv_sec) - (socket->beat.tv_usec + 1000000 * socket->beat.tv_sec);
@@ -130,6 +132,7 @@ void sf_sockets_monitor_cb(struct ev_loop *loop, struct ev_timer *t, int revents
 			else if(current->connection->beat == 0) {
 				current->connection->beat = 1;
 				sf_instance_getwritable(current->connection);
+				//printf("Get writeable for beat\n");
 			}
 		}
 		if(timer->context->sockets == NULL)
@@ -155,7 +158,6 @@ void sf_sockets_remove(struct sf_connection *connection) {
 
 void sf_freeinfo(void *info) {
 	struct sf_msg_info *msginfo = info;
-	free(msginfo->persistence);
 	free(msginfo);
 }
 
@@ -275,20 +277,42 @@ inline void sf_msglist_remove(struct sf_msg *msg) {
 	}
 	if(msg->parts != NULL) {
 		struct sf_str *next;
+		struct sf_str *prev;
 		struct sf_str *current = msg->parts;
 		x = 1;
 		do {
 			next = current->next;
+			prev = next->prev;
 			if(next == msg->parts)
 				x = 0;
 			sf_str_remove(current);
 			if(msg->parts == NULL)
 				x = 0;
-			else if(next->prev == current && next == msg->parts)
+			else if(prev == current && next == msg->parts)
 				x = 0;
 			current = next;
 		}
 		while(x);
+	}
+	msg->prev->next = msg->next;
+	msg->next->prev = msg->prev;
+	if(msg == msglist->msgs) {
+		if(msg->next == msglist->msgs)
+			msglist->msgs = NULL;
+		else
+			msglist->msgs = msg->next;
+	}
+	free(msg);
+}
+
+inline void sf_msglist_remove_keep(struct sf_msg *msg) {
+	int x;
+	struct sf_msglist *msglist = msg->msglist;
+	if(msg->info != NULL) {
+		if(msg->freeinfo != NULL)
+			msg->freeinfo(msg->info);
+		else
+			free(msg->info);
 	}
 	msg->prev->next = msg->next;
 	msg->next->prev = msg->prev;
@@ -421,11 +445,11 @@ struct sf_instance *sf_instance_new(struct sf_ctx *context, int port, void (*val
 	
 	if(port != -1) {
 		int optval = 1;
-		struct sockaddr_in addr;
+		struct sockaddr_in6 addr;
 		socklen_t addr_len = sizeof(addr);
 		instance->server = malloc(sizeof(struct sf_server));
 
-		if((instance->server->socket = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
+		if((instance->server->socket = socket(AF_INET6, SOCK_STREAM, 0)) < 0) {
 			perror("socket error");
 			free(instance->server);
 			free(instance);
@@ -433,16 +457,20 @@ struct sf_instance *sf_instance_new(struct sf_ctx *context, int port, void (*val
 		}
 		
 		int fl = fcntl(instance->server->socket, F_GETFL);
-		if (fcntl(instance->server->socket, F_SETFL, fl | O_NONBLOCK) < 0)
+		if(fcntl(instance->server->socket, F_SETFL, fl | O_NONBLOCK) < 0)
 			printf("error on setting socket flags.");
 			
 		if(setsockopt(instance->server->socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
 			perror("error setting SO_REUSEADDR");
+		
+		optval = 0;
+		if(setsockopt(instance->server->socket, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&optval, sizeof(optval)) < 0)
+			perror("error setting IPV6_V6ONLY");
 
 		memset(&addr, '\0', addr_len);
-		addr.sin_family = AF_INET;
-		addr.sin_port = htons(port);
-		addr.sin_addr.s_addr = INADDR_ANY;
+		addr.sin6_family = AF_INET6;
+		addr.sin6_port = htons(port);
+		addr.sin6_addr = in6addr_any;
 
 		if(bind(instance->server->socket, (struct sockaddr*)&addr, addr_len) != 0) {
 			perror("bind error");
@@ -452,14 +480,14 @@ struct sf_instance *sf_instance_new(struct sf_ctx *context, int port, void (*val
 			return NULL;
 		}
 		
-		if (getsockname(instance->server->socket, (struct sockaddr *)&addr, &addr_len) == -1) {
+		if(getsockname(instance->server->socket, (struct sockaddr *)&addr, &addr_len) == -1) {
 			perror("getsockname error");
 			close(instance->server->socket);
 			free(instance->server);
 			free(instance);
 			return NULL;
 		}
-		instance->server->port = ntohs(addr.sin_port);
+		instance->server->port = ntohs(addr.sin6_port);
 
 		if(listen(instance->server->socket, 2) < 0) {
 			perror("listen error");
@@ -468,8 +496,10 @@ struct sf_instance *sf_instance_new(struct sf_ctx *context, int port, void (*val
 			free(instance);
 			return NULL;
 		}
-	
-		printf("Server listening on %s:%d\n", inet_ntoa(addr.sin_addr), (int) ntohs(addr.sin_port));
+		
+		char address[INET6_ADDRSTRLEN];
+		inet_ntop(AF_INET6, &addr.sin6_addr, address, INET6_ADDRSTRLEN);
+		printf("Server listening on %s %d\n", address, instance->server->port);
 		
 		instance->server->w_accept = malloc(sizeof(struct sf_io));
 		instance->server->w_accept->ptr = instance;
@@ -491,7 +521,7 @@ void sf_instance_validate_timeout(struct ev_loop *loop, struct ev_timer *w_, int
 
 void sf_instance_accept(struct ev_loop *loop, struct ev_io *w_, int revents) {
 	struct sf_io *w_accept = (struct sf_io *)w_;
-	socklen_t addr_len = sizeof(struct sockaddr_in);
+	socklen_t addr_len = sizeof(struct sockaddr_storage);
 
 	if(revents & EV_ERROR) {
 		perror("got invalid event");
@@ -523,7 +553,9 @@ void sf_instance_accept(struct ev_loop *loop, struct ev_io *w_, int revents) {
 	if(setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
 		perror("error setting SO_REUSEADDR");
 
-	printf("Client %s:%d accepted\n", inet_ntoa(connection->addr.sin_addr), (int)ntohs(connection->addr.sin_port));
+	char address[INET6_ADDRSTRLEN];
+	inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&connection->addr)->sin6_addr, address, INET6_ADDRSTRLEN);
+	printf("Client %s %d accepted\n", address, (int)ntohs(((struct sockaddr_in6 *)&connection->addr)->sin6_port));
 	
 	connection->socket = sf_sockets_add(connection, sd);
 	
@@ -551,7 +583,7 @@ void sf_instance_accept(struct ev_loop *loop, struct ev_io *w_, int revents) {
 
 void sf_instance_connecting(struct ev_loop *loop, struct ev_timer *w_, int revents) {
 	struct sf_conntimer *w = (struct sf_conntimer *)w_;
-	int addr_len = sizeof(struct sockaddr_in);
+	int addr_len = sizeof(struct sockaddr_storage);
 	struct sf_connection *connection = w->connection;
 	
 	struct timeval now;
@@ -595,9 +627,8 @@ void sf_instance_connecting(struct ev_loop *loop, struct ev_timer *w_, int reven
 			if(ret == 1) {
 				connection->validated = 1;
 				ret = sf_instance_callback(connection, CONNECTED, NULL);
-				if(ret < 0) {
+				if(ret < 0)
 					sf_instance_close(connection);
-				}
 			}
 			else {
 				connection->validate_timeout = malloc(sizeof(struct sf_conntimer));
@@ -610,8 +641,9 @@ void sf_instance_connecting(struct ev_loop *loop, struct ev_timer *w_, int reven
 }
 
 struct sf_connection *sf_instance_connect(struct sf_instance *instance, char *ip, int port) {
-	int addr_len = sizeof(struct sockaddr_in);
-	int e, errsv;
+	int addr_len = sizeof(struct sockaddr_storage);
+	int e, errsv, sd;
+	//char *address = malloc(INET6_ADDRSTRLEN);
 		
 	struct sf_connection *connection = malloc(sizeof(struct sf_connection));
 	connection->type = CLIENT;
@@ -622,35 +654,51 @@ struct sf_connection *sf_instance_connect(struct sf_instance *instance, char *ip
 		connection->validated = 0;
 	}
 	
-	int sd = socket(PF_INET, SOCK_STREAM, 0);
-	if(sd < 0) {
-		perror("socket error");
+	char szHost[256], szPort[16];
+	struct addrinfo ai_hints, *ai_list, *ai;
+	memset(&ai_hints, 0, sizeof(ai_hints));
+	ai_hints.ai_family = AF_UNSPEC;
+	ai_hints.ai_socktype = SOCK_STREAM;
+	ai_hints.ai_protocol = IPPROTO_TCP;
+	char *service = malloc(16);
+	snprintf(service, 16, "%d", port);
+	e = getaddrinfo(ip, service, &ai_hints, &ai_list);
+	if (e != 0) {
+		perror("getaddrinfo error");
 		free(connection);
 		return NULL;
 	}
+	free(service);
+	
+	for (ai = ai_list; ai != NULL; ai = ai->ai_next) {
+		getnameinfo(ai->ai_addr, ai->ai_addrlen, szHost, sizeof(szHost), szPort, sizeof(szPort), NI_NUMERICHOST | NI_NUMERICSERV);
+		printf("host=%s, port=%s, family=%d\n", szHost, szPort, ai->ai_family);
 
-	int fl = fcntl(sd, F_GETFL);
-	if (fcntl(sd, F_SETFL, fl | O_NONBLOCK) < 0)
-		printf("error on setting socket flags.\n");
+		sd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+		if (sd < 0)	{
+			perror("socket error");
+			free(connection);
+			return NULL;
+		}
+		
+		int fl = fcntl(sd, F_GETFL);
+		if (fcntl(sd, F_SETFL, fl | O_NONBLOCK) < 0)
+			printf("error on setting socket flags.\n");
 
-	int optval = 1;
-	if(setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
-		perror("error setting SO_REUSEADDR");
-	
-	memset(&connection->addr, '\0', addr_len);
-	connection->addr.sin_family = AF_INET;
-	connection->addr.sin_port = htons(port);
-	connection->addr.sin_addr.s_addr = inet_addr(ip);
-	
-	printf("Connecting to %s:%d\n", inet_ntoa(connection->addr.sin_addr), (int)ntohs(connection->addr.sin_port));
-	
-	e = connect(sd, (struct sockaddr *)&connection->addr, addr_len);
-	errsv = errno;
-	if(e < 0 && errsv != EINPROGRESS) {
-		perror("Connect error");
-		free(connection);
-		return NULL;
-	}
+		int optval = 1;
+		if(setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
+			perror("error setting SO_REUSEADDR");
+		
+		e = connect(sd, ai->ai_addr, ai->ai_addrlen);
+		errsv = errno;
+		if(e < 0 && errsv != EINPROGRESS) {
+			perror("Connect error");
+			continue;
+		}
+		memcpy(&connection->addr, ai->ai_addr, ai->ai_addrlen);
+		break;
+   }
+   freeaddrinfo(ai_list);
 	
 	connection->receive = sf_msglist_new();
 	connection->send = sf_msglist_new();
@@ -725,7 +773,7 @@ void sf_instance_getwritableall(struct sf_instance *instance) {
 
 unsigned int power(unsigned int base, unsigned int expo) {
 	unsigned int ret = base;
-	while(expo > 0) {
+	while(expo > 1) {
 		ret *= base;
 		expo--;
 	}
@@ -959,7 +1007,7 @@ int sf_instance_write(struct sf_connection *connection) {
 	ev_io_stop(connection->instance->context->loop, &connection->w->io);
 	ev_io_set(&connection->w->io, connection->w->io.fd, EV_READ);
 	ev_io_start(connection->instance->context->loop, &connection->w->io);
-	int y, at, ret = -1;
+	int x, y, at, ret = -1;
 	int len;
 	if(connection->send->msgs != NULL) {
 		struct sf_msg *next;
@@ -1005,11 +1053,13 @@ int sf_instance_write(struct sf_connection *connection) {
 		}
 		gettimeofday(&connection->socket->beat, NULL);
 		connection->beat = 2;
+		//printf("Beat sent at <%ld.%06ld>\n",  (long int)(connection->socket->beat.tv_sec), (long int)(connection->socket->beat.tv_usec));
 	}
 	if(connection->send->msgs != NULL) {
 		struct sf_msg *next;
 		struct sf_msg *current = connection->send->msgs;
 		struct sf_msg_info *info;
+		struct sf_str * sendstr_next;
 		y = 1;
 		do {
 			next = current->next;
@@ -1019,10 +1069,11 @@ int sf_instance_write(struct sf_connection *connection) {
 			if(current->parts != NULL) {
 				struct sf_str *sendstr = current->parts;
 				do {
+					sendstr_next = sendstr->next;
 					//printf("header: \n");
 					//binary_dump(sendstr->data, 16);
 					ret = info->uid - at;
-					if(ret < sendstr->len) {
+					if(ret < sendstr->len && sendstr->len > 0) {
 						len = send(connection->w->io.fd, &sendstr->data[ret], sendstr->len - ret, 0);
 						if(len < 1) {
 							perror("send error");
@@ -1035,7 +1086,8 @@ int sf_instance_write(struct sf_connection *connection) {
 							log2file("server-send.txt", &sendstr->data[ret], len);
 						else
 							log2file("client-send.txt", &sendstr->data[ret], len);
-						printf("len: %d strlen:%u ret:%d\n", len, (unsigned int)sendstr->len, ret);
+						
+						printf("len: %d strlen:%u ret:%d, persistence: %d\n", len, (unsigned int)sendstr->len, ret, *info->persistence);
 						*/
 						info->uid += len;
 						if(len < sendstr->len - ret) {
@@ -1043,22 +1095,38 @@ int sf_instance_write(struct sf_connection *connection) {
 							y = 0;
 							break;
 						}
-						if(sendstr->next == current->parts) {
-							(*info->persistence)--;
+						if(sendstr_next == current->parts) {
+							x = 0;
+							if(next == connection->send->msgs)
+								y = 0;
+							*info->persistence = *info->persistence - 1;
 							if(*info->persistence == 0) {
-								if(next == connection->send->msgs)
-									y = 0;
+								free(info->persistence);
 								sf_msglist_remove(current);
+								break;
+							}
+							else {
+								sf_msglist_remove_keep(current);
 								break;
 							}
 						}
 					}
-					else if(ret == 0)
+					else if(ret <= 0)
 						break;
-					at += sendstr->len;				
-					sendstr = sendstr->next;
+					else if(sendstr->len - ret <= 0) {
+						connection->send->msgs = NULL;
+						current->parts = NULL;
+						printf("WTF!\n");
+						break;
+					}
+					at += sendstr->len;
+					if(current->parts == NULL) 
+						x = 0;
+					else if(sendstr_next->prev == sendstr && sendstr_next == current->parts)
+						x = 0;
+					sendstr = sendstr_next;
 				}
-				while(sendstr != current->parts);
+				while(x);
 			}
 			if(connection->send->msgs == NULL)
 				y = 0;
@@ -1262,17 +1330,19 @@ int sf_instance_read(struct sf_connection *connection) {
 			connection->validated = 1;
 			ret = sf_instance_callback(connection, CONNECTED, NULL);
 			if(ret < 0) {
+				if(msg != NULL)
+					sf_msglist_remove(msg);
 				sf_instance_close(connection);
 				return -1;
 			}
 		}
 	}
+	if(msg != NULL)
+		sf_msglist_remove(msg);
 	if(ret < 0) {
 		sf_instance_close(connection);
 		return -1;
 	}
-	if(msg != NULL)
-		sf_msglist_remove(msg);
 	if(ret < 0)
 		sf_instance_close(connection);
 	return 0;
