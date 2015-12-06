@@ -277,18 +277,16 @@ inline void sf_msglist_remove(struct sf_msg *msg) {
 	}
 	if(msg->parts != NULL) {
 		struct sf_str *next;
-		struct sf_str *prev;
 		struct sf_str *current = msg->parts;
 		x = 1;
 		do {
 			next = current->next;
-			prev = next->prev;
 			if(next == msg->parts)
 				x = 0;
 			sf_str_remove(current);
 			if(msg->parts == NULL)
 				x = 0;
-			else if(prev == current && next == msg->parts)
+			else if(next->prev == current && next == msg->parts)
 				x = 0;
 			current = next;
 		}
@@ -642,7 +640,8 @@ void sf_instance_connecting(struct ev_loop *loop, struct ev_timer *w_, int reven
 
 struct sf_connection *sf_instance_connect(struct sf_instance *instance, char *ip, int port) {
 	int addr_len = sizeof(struct sockaddr_storage);
-	int e, errsv, sd;
+	int x = 0, e, errsv, error, sd;
+	socklen_t len;
 	//char *address = malloc(INET6_ADDRSTRLEN);
 		
 	struct sf_connection *connection = malloc(sizeof(struct sf_connection));
@@ -669,7 +668,7 @@ struct sf_connection *sf_instance_connect(struct sf_instance *instance, char *ip
 		return NULL;
 	}
 	free(service);
-	
+
 	for (ai = ai_list; ai != NULL; ai = ai->ai_next) {
 		getnameinfo(ai->ai_addr, ai->ai_addrlen, szHost, sizeof(szHost), szPort, sizeof(szPort), NI_NUMERICHOST | NI_NUMERICSERV);
 		printf("host=%s, port=%s, family=%d\n", szHost, szPort, ai->ai_family);
@@ -680,7 +679,7 @@ struct sf_connection *sf_instance_connect(struct sf_instance *instance, char *ip
 			free(connection);
 			return NULL;
 		}
-		
+
 		int fl = fcntl(sd, F_GETFL);
 		if (fcntl(sd, F_SETFL, fl | O_NONBLOCK) < 0)
 			printf("error on setting socket flags.\n");
@@ -688,17 +687,27 @@ struct sf_connection *sf_instance_connect(struct sf_instance *instance, char *ip
 		int optval = 1;
 		if(setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
 			perror("error setting SO_REUSEADDR");
-		
+
 		e = connect(sd, ai->ai_addr, ai->ai_addrlen);
 		errsv = errno;
-		if(e < 0 && errsv != EINPROGRESS) {
-			perror("Connect error");
+		len = sizeof(error);
+		error = 0;
+		if(getsockopt(sd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+			perror("error getting error");
+		if(e < 0 && error != 0 && error != EINPROGRESS) {
+			printf("Connect error %s\n", strerror(error));;
 			continue;
 		}
+		else
+			x = 1;
 		memcpy(&connection->addr, ai->ai_addr, ai->ai_addrlen);
 		break;
-   }
-   freeaddrinfo(ai_list);
+	}
+	freeaddrinfo(ai_list);
+	if(!x) {
+		free(connection);
+		return NULL;	
+	}
 	
 	connection->receive = sf_msglist_new();
 	connection->send = sf_msglist_new();
