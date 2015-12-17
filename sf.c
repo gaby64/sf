@@ -597,15 +597,19 @@ void sf_instance_connecting(struct ev_loop *loop, struct ev_timer *w_, int reven
 	
 	int e = connect(connection->w->io.fd, (struct sockaddr *)&connection->addr, addr_len);
 	int errsv = errno;
-	if(e < 0 && errsv != EINPROGRESS && errsv != EALREADY && errsv != EISCONN) {
-		perror("Connect error");
+	len = sizeof(error);
+	error = 0;
+	if(getsockopt(connection->w->io.fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
+		perror("error getting error");
+	if(e < 0 && error != 0 && error != EINPROGRESS && error != EALREADY && error != EISCONN) {
+		printf("Connect error %s\n", strerror(error));;
 		ev_timer_stop(connection->instance->context->loop, &w->timer);
 		free(w);
 		free(connection->connect_timeout);
 		sf_instance_close(connection);
 		return;
 	}
-	if(errsv == EISCONN || e >= 0) {
+	if(errsv == EISCONN || error == EISCONN || e >= 0) {
 		free(connection->connect_timeout);
 		ev_timer_stop(connection->instance->context->loop, &w->timer);
 		free(w);
