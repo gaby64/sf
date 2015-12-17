@@ -597,8 +597,8 @@ void sf_instance_connecting(struct ev_loop *loop, struct ev_timer *w_, int reven
 	
 	int e = connect(connection->w->io.fd, (struct sockaddr *)&connection->addr, addr_len);
 	int errsv = errno;
-	len = sizeof(error);
-	error = 0;
+	int error = 0;
+	socklen_t len = sizeof(error);
 	if(getsockopt(connection->w->io.fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
 		perror("error getting error");
 	if(e < 0 && error != 0 && error != EINPROGRESS && error != EALREADY && error != EISCONN) {
