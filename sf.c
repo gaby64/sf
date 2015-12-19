@@ -69,16 +69,19 @@ struct sf_ctx *sf_newcontext(struct ev_loop *loop, struct sf_timers timers) {
 	context->sockets = NULL;
 	context->sockets_timer.context = context;
 	context->timers = timers;
+	context->instances = NULL;
 	ev_timer_init(&context->sockets_timer.timer, sf_sockets_monitor_cb, timers.socketbeat_interval/1000000.0, timers.socketbeat_interval/1000000.0);
 	ev_timer_start(loop, &context->sockets_timer.timer);
 	return context;
 }
 
 void sf_delcontext(struct sf_ctx *context) {
-	ev_timer_stop(context->loop, &context->sockets_timer.timer);
-	while(context->sockets != NULL)
-		sf_instance_del(context->sockets->connection->instance);
-	free(context);
+	if(context != NULL) {
+		ev_timer_stop(context->loop, &context->sockets_timer.timer);
+		while(context->instances != NULL)
+			sf_instance_del(context->instances);
+		free(context);
+	}
 }
 
 
@@ -434,6 +437,17 @@ void sf_connection_remove(struct sf_connection *connection) {
 
 struct sf_instance *sf_instance_new(struct sf_ctx *context, int port, void (*validate)(struct sf_connection *connection, enum sf_reasons reason, struct sf_msg *in, int *ret), void (*callback)(struct sf_connection *connection, enum sf_reasons reason, struct sf_msg *in, int *ret)) {
 	struct sf_instance *instance = malloc(sizeof(struct sf_instance));
+	if(context->instances == NULL) {
+		instance->next = instance;
+		instance->prev = instance;
+		context->instances = instance;
+	}
+	else {
+		context->instances->prev->next = instance;
+		instance->prev = context->instances->prev;
+		context->instances->prev = instance;
+		instance->next = context->instances;
+	}
 	instance->context = context;
 	instance->connections = NULL;
 	instance->dataptr = NULL;
@@ -591,6 +605,7 @@ void sf_instance_connecting(struct ev_loop *loop, struct ev_timer *w_, int reven
 		ev_timer_stop(connection->instance->context->loop, &w->timer);
 		free(w);
 		free(connection->connect_timeout);
+		connection->validated = -1;
 		sf_instance_close(connection);
 		return;
 	}
@@ -601,11 +616,12 @@ void sf_instance_connecting(struct ev_loop *loop, struct ev_timer *w_, int reven
 	socklen_t len = sizeof(error);
 	if(getsockopt(connection->w->io.fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
 		perror("error getting error");
-	if(e < 0 && error != 0 && error != EINPROGRESS && error != EALREADY && error != EISCONN) {
-		printf("Connect error %s\n", strerror(error));;
+	if((e < 0 && error != 0 && error != EINPROGRESS && error != EALREADY && error != EISCONN) || (e < 0 && errsv == ECONNREFUSED)) {
+		printf("Connect error %s %s\n", strerror(errsv), strerror(error));
 		ev_timer_stop(connection->instance->context->loop, &w->timer);
 		free(w);
 		free(connection->connect_timeout);
+		connection->validated = -1;
 		sf_instance_close(connection);
 		return;
 	}
@@ -698,7 +714,7 @@ struct sf_connection *sf_instance_connect(struct sf_instance *instance, char *ip
 		error = 0;
 		if(getsockopt(sd, SOL_SOCKET, SO_ERROR, &error, &len) < 0)
 			perror("error getting error");
-		if(e < 0 && error != 0 && error != EINPROGRESS) {
+		if((e < 0 && error != 0 && error != EINPROGRESS) || (e < 0 && errsv == ECONNREFUSED)) {
 			printf("Connect error %s\n", strerror(error));;
 			continue;
 		}
@@ -1363,14 +1379,16 @@ int sf_instance_close(struct sf_connection *connection) {
 	ev_io_stop(connection->instance->context->loop, &connection->w->io);
 	close(connection->w->io.fd);
 	free(connection->w);
-	if(connection->validated)
-		sf_instance_callback(connection, CLOSING, NULL);
-	else {
-		if(connection->validate_timeout != NULL) {
-			ev_timer_stop(connection->instance->context->loop, &connection->validate_timeout->timer);
-			free(connection->validate_timeout);
+	if(connection->validated != -1) {
+		if(connection->validated)
+			sf_instance_callback(connection, CLOSING, NULL);
+		else {
+			if(connection->validate_timeout != NULL) {
+				ev_timer_stop(connection->instance->context->loop, &connection->validate_timeout->timer);
+				free(connection->validate_timeout);
+			}
+			sf_instance_validate(connection, CLOSING, NULL);
 		}
-		sf_instance_validate(connection, CLOSING, NULL);
 	}
 	sf_msglist_del(connection->receive);
 	sf_msglist_del(connection->send);
@@ -1398,22 +1416,16 @@ void sf_instance_del(struct sf_instance *instance) {
 		free(instance->server->w_accept);
 		free(instance->server);
 	}
-	if(instance->connections != NULL) {
-		int x = 1;
-		struct sf_connection *next;
-		struct sf_connection *current = instance->connections;
-		do {
-			next = current->next;
-			if(next == instance->connections)
-				x = 0;
-			sf_instance_close(current);
-			if(instance->connections == NULL)
-				x = 0;
-			else if(next->prev == current && next == instance->connections)
-				x = 0;
-			current = next;
-		}
-		while(x);
+	while(instance->connections != NULL) {
+		sf_instance_close(instance->connections);
+	}
+	instance->prev->next = instance->next;
+	instance->next->prev = instance->prev;
+	if(instance == instance->context->instances) {
+		if(instance->next == instance->context->instances)
+			instance->context->instances = NULL;
+		else
+			instance->context->instances = instance->next;
 	}
 	free(instance);
 }

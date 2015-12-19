@@ -16,6 +16,12 @@ enum sf_intances {
 	CLIENT
 };
 
+char *reasonsstr[] = { "CLIENT_VAL", 
+						"CONNECTED",
+						"RECEIVED",
+						"WRITABLE",
+						"CLOSING" };
+
 struct sf_str;
 struct sf_msg;
 struct sf_msginfo;
@@ -67,6 +73,8 @@ struct sf_instance {
 	struct sf_connection *connections;
 	void (*validate)(struct sf_connection *connection, enum sf_reasons reason, struct sf_msg *msg, int *ret);
 	void (*callback)(struct sf_connection *connection, enum sf_reasons reason, struct sf_msg *msg, int *ret);
+	struct sf_instance *prev;
+	struct sf_instance *next;
 };
 
 struct sf_connection {
@@ -142,6 +150,7 @@ struct sf_ctx {
 	struct sf_socket *sockets;
 	struct sf_timer sockets_timer;
 	struct sf_timers timers;
+	struct sf_instance *instances;
 };
 
 void packi16(unsigned char *buf, unsigned short i);
