@@ -673,29 +673,27 @@ struct sf_connection *sf_instance_connect(struct sf_instance *instance, char *ip
 		connection->validated = 0;
 	}
 	
-	char szHost[256], szPort[16];
+	unsigned char shost[256], sport[6];
 	struct addrinfo ai_hints, *ai_list, *ai;
 	memset(&ai_hints, 0, sizeof(ai_hints));
 	ai_hints.ai_family = AF_UNSPEC;
 	ai_hints.ai_socktype = SOCK_STREAM;
 	ai_hints.ai_protocol = IPPROTO_TCP;
-	char *service = malloc(16);
-	snprintf(service, 16, "%d", port);
-	e = getaddrinfo(ip, service, &ai_hints, &ai_list);
+	snprintf(sport, 6, "%d", port);
+	e = getaddrinfo(ip, sport, &ai_hints, &ai_list);
 	if (e != 0) {
 		perror("getaddrinfo error");
 		free(connection);
 		return NULL;
 	}
-	free(service);
-
 	for (ai = ai_list; ai != NULL; ai = ai->ai_next) {
-		getnameinfo(ai->ai_addr, ai->ai_addrlen, szHost, sizeof(szHost), szPort, sizeof(szPort), NI_NUMERICHOST | NI_NUMERICSERV);
-		printf("host=%s, port=%s, family=%d\n", szHost, szPort, ai->ai_family);
+		getnameinfo(ai->ai_addr, ai->ai_addrlen, shost, sizeof(shost), sport, sizeof(sport), NI_NUMERICHOST | NI_NUMERICSERV);
+		printf("host:%s, port:%s\n", shost, sport);
 
 		sd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 		if (sd < 0)	{
 			perror("socket error");
+			freeaddrinfo(ai_list);
 			free(connection);
 			return NULL;
 		}
@@ -1088,7 +1086,7 @@ int sf_instance_write(struct sf_connection *connection) {
 		struct sf_msg *next;
 		struct sf_msg *current = connection->send->msgs;
 		struct sf_msg_info *info;
-		struct sf_str * sendstr_next;
+		struct sf_str *sendstr_next;
 		y = 1;
 		do {
 			next = current->next;
@@ -1097,6 +1095,7 @@ int sf_instance_write(struct sf_connection *connection) {
 			at = 0;
 			if(current->parts != NULL) {
 				struct sf_str *sendstr = current->parts;
+				x = 1;
 				do {
 					sendstr_next = sendstr->next;
 					//printf("header: \n");

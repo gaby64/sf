@@ -8,8 +8,27 @@
 
 int force_exit = 0;
 
+char *mkrndstr(size_t length) {
+	static char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.-#'?!";
+	char *randomString;
+
+	if(length) {
+		randomString = malloc(length + 1);
+		int l = (int)(sizeof(charset) -1);
+		int key, n;
+		for (n = 0; n < length; n++) {        
+			key = rand() % l;
+			randomString[n] = charset[key];
+		}
+
+		randomString[length] = '\0';
+	}
+
+	return randomString;
+}
+
 void validate_server(struct sf_connection *connection, enum sf_reasons reason, struct sf_msg *in, int *ret) {
-	printf("Server validate, reason: %d\n", reason);
+	printf("Server validate, reason: %s\n", reasonsstr[reason]);
 	switch(reason) {
 		case RECEIVED:
 			printf("Client sent validation initiation byte\n");
@@ -28,7 +47,7 @@ void validate_server(struct sf_connection *connection, enum sf_reasons reason, s
 void callback_server(struct sf_connection *connection, enum sf_reasons reason, struct sf_msg *in, int *ret) {
 	int x;
 	char *rndstr;
-	printf("Server callback, reason: %d\n", reason);
+	printf("Server callback, reason: %s\n", reasonsstr[reason]);
 	switch(reason) {
 		case CONNECTED:
 			printf("validated\n");
@@ -63,7 +82,7 @@ void callback_server(struct sf_connection *connection, enum sf_reasons reason, s
 }
 
 void validate_client(struct sf_connection *connection, enum sf_reasons reason, struct sf_msg *in, int *ret) {
-	printf("Client validate, reason: %d\n", reason);
+	printf("Client validate, reason: %s\n", reasonsstr[reason]);
 	switch(reason) {
 		case CLIENT_VAL:
 			;
@@ -87,7 +106,7 @@ void validate_client(struct sf_connection *connection, enum sf_reasons reason, s
 
 void callback_client(struct sf_connection *connection, enum sf_reasons reason, struct sf_msg *in, int *ret) {
 	int x;
-	printf("Client callback, reason: %d\n", reason);
+	printf("Client callback, reason: %s\n", reasonsstr[reason]);
 	switch(reason) {
 		case CONNECTED:
 			printf("validated\n");
@@ -153,13 +172,13 @@ int main(int argc, char **argv) {
 	timers.connect_timeout = 5000000;
 	timers.validation_timeout = 10000000;
 	struct sf_ctx *sf_context = sf_newcontext(loop, timers);
-	struct sf_instance *server = sf_instance_new(sf_context, 0, validate_server, callback_server);
+	struct sf_instance *server = sf_instance_new(sf_context, 6666, validate_server, callback_server);
 	if(server == NULL)
 		exit(0);
 	struct sf_instance *client = sf_instance_new(sf_context, -1, validate_client, callback_client);
 	if(client == NULL)
 		exit(0);
-	struct sf_connection *client_server = sf_instance_connect(client, "0.0.0.0", server->server->port);
+	struct sf_connection *client_server = sf_instance_connect(client, "127.0.0.1", server->server->port);
 	
 	printf("Starting ev loop\n");
 	
