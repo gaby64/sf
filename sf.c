@@ -323,7 +323,6 @@ inline void sf_msglist_remove(struct sf_msg *msg) {
 inline void sf_msglist_remove_keep(struct sf_msg *msg) {
 	int x;
 	struct sf_msglist *msglist = msg->msglist;
-	//find last msg in msg list that contains a matching persistence
 	if(msg->info != NULL) {
 		if(msg->freeinfo != NULL)
 			msg->freeinfo(msg->info);
