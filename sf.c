@@ -193,6 +193,20 @@ inline void sf_str_remove(struct sf_str *str) {
 	free(str);
 }
 
+inline void sf_str_remove_keep(struct sf_str *str) {
+	struct sf_msg *msg = str->parent;
+	str->prev->next = str->next;
+	str->next->prev = str->prev;
+	if(str == msg->parts) {
+		if(str->next == msg->parts)
+			msg->parts = NULL;
+		else
+			msg->parts = str->next;
+	}
+	//free(str->data);
+	free(str);
+}
+
 inline struct sf_msg *sf_msg_new() {
 	struct sf_msg *msg = malloc(sizeof(struct sf_msg));
 	msg->parts = NULL;
@@ -309,11 +323,29 @@ inline void sf_msglist_remove(struct sf_msg *msg) {
 inline void sf_msglist_remove_keep(struct sf_msg *msg) {
 	int x;
 	struct sf_msglist *msglist = msg->msglist;
+	//find last msg in msg list that contains a matching persistence
 	if(msg->info != NULL) {
 		if(msg->freeinfo != NULL)
 			msg->freeinfo(msg->info);
 		else
 			free(msg->info);
+	}
+	if(msg->parts != NULL) {
+		struct sf_str *next;
+		struct sf_str *current = msg->parts;
+		x = 1;
+		do {
+			next = current->next;
+			if(next == msg->parts)
+				x = 0;
+			sf_str_remove_keep(current);
+			if(msg->parts == NULL)
+				x = 0;
+			else if(next->prev == current && next == msg->parts)
+				x = 0;
+			current = next;
+		}
+		while(x);
 	}
 	msg->prev->next = msg->next;
 	msg->next->prev = msg->prev;
@@ -945,17 +977,21 @@ void sf_instance_sendtoarray(struct sf_toarray *toarray, struct sf_msg *msg) {
 	*persistence = count;
 	struct sf_msg *temp;
 	struct sf_str *tempstr;
+	struct sf_str *str;
 	struct sf_msg *send_s = sf_send_encode(msg);
 	current = toarray->array;
 	do {
 		temp = sf_msg_new();
-		temp->parts = send_s->parts;
-		tempstr = temp->parts;
+		str = send_s->parts;
 		do {
+			tempstr = malloc(sizeof(struct sf_str));
+			tempstr->data = str->data;
+			tempstr->len = str->len;
 			tempstr->parent = temp;
-			tempstr = tempstr->next;
+			sf_str_add(tempstr);
+			str = str->next;
 		}
-		while(tempstr != temp->parts);
+		while(str != send_s->parts);
 		temp->msglist = current->connection->send;
 		temp->infosize = sizeof(struct sf_msg_info);
 		temp->freeinfo = sf_freeinfo;
@@ -987,17 +1023,21 @@ void sf_instance_sendtoall(struct sf_instance *instance, struct sf_msg *msg) {
 	*persistence = count;
 	struct sf_msg *temp;
 	struct sf_str *tempstr;
+	struct sf_str *str;
 	struct sf_msg *send_s = sf_send_encode(msg);
 	current = instance->connections;
 	do {
 		temp = sf_msg_new();
-		temp->parts = send_s->parts;
-		tempstr = temp->parts;
+		str = send_s->parts;
 		do {
+			tempstr = malloc(sizeof(struct sf_str));
+			tempstr->data = str->data;
+			tempstr->len = str->len;
 			tempstr->parent = temp;
-			tempstr = tempstr->next;
+			sf_str_add(tempstr);
+			str = str->next;
 		}
-		while(tempstr != temp->parts);
+		while(str != send_s->parts);
 		temp->msglist = current->send;
 		temp->infosize = sizeof(struct sf_msg_info);
 		temp->freeinfo = sf_freeinfo;
