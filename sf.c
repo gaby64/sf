@@ -44,14 +44,14 @@ unsigned int urand() {
 }
 
 inline void packi16(unsigned char *buf, unsigned short i) {
-   *buf++ = i>>8;
+	*buf++ = i>>8;
 	*buf++ = i;
 }
 
 inline void packi32(unsigned char *buf, unsigned int i) {
-   *buf++ = i>>24;
+	*buf++ = i>>24;
 	*buf++ = i>>16;
-   *buf++ = i>>8;
+	*buf++ = i>>8;
 	*buf++ = i;
 }
 
@@ -125,10 +125,10 @@ void sf_sockets_monitor_cb(struct ev_loop *loop, struct ev_timer *t, int revents
 	gettimeofday(&now, NULL);
 	do {
 		next = current->next;
+		if(next == timer->context->sockets)
+			x = 0;
 		if(current->connection->beat != -1) {
 			if((now.tv_sec-current->lastbeat.tv_sec)*1000000 + (now.tv_usec-current->lastbeat.tv_usec) > timer->context->timers.socketbeat_timeout) {
-				if(next == timer->context->sockets)
-					x = 0;
 				printf("connection timed-out, %uns\n", (unsigned int)((now.tv_sec-current->lastbeat.tv_sec)*1000000 + (now.tv_usec-current->lastbeat.tv_usec)));
 				sf_instance_close(current->connection);
 			}
@@ -139,8 +139,6 @@ void sf_sockets_monitor_cb(struct ev_loop *loop, struct ev_timer *t, int revents
 			}
 		}
 		if(timer->context->sockets == NULL)
-			x = 0;
-		else if(next->prev == current && next == timer->context->sockets)
 			x = 0;
 		current = next;
 	}
@@ -203,7 +201,6 @@ inline void sf_str_remove_keep(struct sf_str *str) {
 		else
 			msg->parts = str->next;
 	}
-	//free(str->data);
 	free(str);
 }
 
@@ -303,8 +300,6 @@ inline void sf_msglist_remove(struct sf_msg *msg) {
 			sf_str_remove(current);
 			if(msg->parts == NULL)
 				x = 0;
-			else if(next->prev == current && next == msg->parts)
-				x = 0;
 			current = next;
 		}
 		while(x);
@@ -340,8 +335,6 @@ inline void sf_msglist_remove_keep(struct sf_msg *msg) {
 			sf_str_remove_keep(current);
 			if(msg->parts == NULL)
 				x = 0;
-			else if(next->prev == current && next == msg->parts)
-				x = 0;
 			current = next;
 		}
 		while(x);
@@ -368,8 +361,6 @@ void sf_msglist_del(struct sf_msglist *msglist) {
 				x = 0;
 			sf_msglist_remove(current);
 			if(msglist->msgs == NULL)
-				x = 0;
-			else if(next->prev == current && next == msglist->msgs)
 				x = 0;
 			current = next;
 		}
@@ -426,8 +417,6 @@ void sf_toarray_del(struct sf_toarray *toarray) {
 				x = 0;
 			sf_toarray_remove(current);
 			if(toarray->array == NULL)
-				x = 0;
-			else if(next->prev == current && next == toarray->array)
 				x = 0;
 			current = next;
 		}
@@ -1189,15 +1178,11 @@ int sf_instance_write(struct sf_connection *connection) {
 					at += sendstr->len;
 					if(current->parts == NULL) 
 						x = 0;
-					else if(sendstr_next->prev == sendstr && sendstr_next == current->parts)
-						x = 0;
 					sendstr = sendstr_next;
 				}
 				while(x);
 			}
 			if(connection->send->msgs == NULL)
-				y = 0;
-			else if(next->prev == current && next == connection->send->msgs)
 				y = 0;
 			current = next;
 		}

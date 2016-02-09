@@ -37,17 +37,14 @@ if(array != NULL) {
 	current = array;
 	do {
 		next = current->next;
-		
 		if(next == array)
 			x = 0;
+		
 		remove(current);
 		
 		if(array == NULL) 
 			x = 0;
-		else if(next->prev == current && next == array)
-			x = 0;
 		current = next;
-		
 	}
 	while(x);
 }
